@@ -7,10 +7,19 @@ const Query = struct {
     right_exclusive: usize,
 };
 
-const max_query_len = 1 << 10;
-const array_len = 1 << 10;
-const work_count = 1 << 16;
-const thread_count = 11;
+const PartBounds = struct {
+    left: usize,
+    right: usize,
+};
+
+const ConflictLock = semantic_lock.ConflictGraphLockV2;
+
+const parts_count = 4;
+const max_query_len = 1 << 11;
+const array_len = 1 << 12;
+const part_len = array_len / parts_count;
+const work_count = 1 << 15;
+const thread_count = 6;
 
 const Operation = enum {
     set_range,
@@ -152,16 +161,38 @@ fn randomRequest(random: std.Random, operation: Operation) Request {
     };
 }
 
+fn requestBounds(request: Request) PartBounds {
+    const query: Query = switch (request) {
+        .point_set => |point| .{
+            .left = point.index,
+            .right_exclusive = point.index + 1,
+        },
+        .point_get => |index| .{
+            .left = index,
+            .right_exclusive = index + 1,
+        },
+        .set_range => |range| range.query,
+        .add_range => |range| range.query,
+        .sum_range => |query| query,
+    };
+
+    return .{
+        .left = query.left / part_len,
+        .right = (query.right_exclusive - 1) / part_len,
+    };
+}
+
 fn executeRequest(
-    graph: *semantic_lock.ConflictGraphLock,
+    graph: *ConflictLock,
     values: []std.atomic.Value(usize),
     request: Request,
 ) void {
     const operation = std.meta.activeTag(request);
     const vertex_id: usize = @backingInt(operation);
+    const bounds = requestBounds(request);
 
-    graph.acquire(vertex_id);
-    defer graph.release(vertex_id);
+    graph.acquire(vertex_id, bounds.left, bounds.right);
+    defer graph.release(vertex_id, bounds.left, bounds.right);
 
     switch (request) {
         .point_set => |point| values[point.index].store(point.value, .monotonic),
@@ -187,7 +218,7 @@ fn executeRequest(
 }
 
 fn runWorker(
-    graph: *semantic_lock.ConflictGraphLock,
+    graph: *ConflictLock,
     values: []std.atomic.Value(usize),
     workload: *const Workload,
     worker_index: usize,
@@ -202,7 +233,7 @@ fn runWorker(
     }
 }
 
-fn addArrayConflicts(graph: *semantic_lock.ConflictGraphLock) !void {
+fn addArrayConflicts(graph: *ConflictLock) !void {
     try graph.addConflict(@backingInt(Operation.set_range), @backingInt(Operation.set_range));
     try graph.addConflict(@backingInt(Operation.set_range), @backingInt(Operation.add_range));
     try graph.addConflict(@backingInt(Operation.set_range), @backingInt(Operation.sum_range));
@@ -221,7 +252,7 @@ fn runArrayBenchmark(allocator: std.mem.Allocator, workload: *const Workload) !v
     defer values.deinit(allocator);
     try values.appendNTimes(allocator, .init(0), array_len);
 
-    var graph = try semantic_lock.ConflictGraphLock.init(allocator, 5);
+    var graph = try ConflictLock.init(allocator, 5);
     defer graph.deinit();
     try addArrayConflicts(&graph);
 

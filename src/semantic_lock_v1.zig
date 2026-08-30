@@ -55,7 +55,7 @@ pub const ConflictGraphLock = struct {
         self.adjacency.items[second].appendAssumeCapacity(first);
     }
 
-    pub fn acquire(self: *Self, vertex_id: usize) void {
+    pub fn acquire(self: *Self, vertex_id: usize, _: usize, _: usize) void {
         std.debug.assert(vertex_id < self.vertex_states.items.len);
 
         while (true) {
@@ -104,7 +104,7 @@ pub const ConflictGraphLock = struct {
         }
     }
 
-    pub fn release(self: *Self, vertex_id: usize) void {
+    pub fn release(self: *Self, vertex_id: usize, _: usize, _: usize) void {
         std.debug.assert(vertex_id < self.vertex_states.items.len);
         _ = self.vertex_states.items[vertex_id].active_count.fetchSub(1, .release);
     }
