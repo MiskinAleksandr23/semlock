@@ -3,6 +3,8 @@ const zbench = @import("zbench");
 const semantic_lock = @import("semantic_lock");
 const bench_options = @import("bench_options");
 
+const AtomicInteger = std.atomic.Value(i32);
+
 const Query = struct {
     left: usize,
     right_exclusive: usize,
@@ -13,22 +15,35 @@ const PartBounds = struct {
     right: usize,
 };
 
-const ConflictLock = if (bench_options.use_v2)
+const NoLock = struct {
+    const Self = @This();
+
+    fn init(_: std.mem.Allocator, _: usize) !Self {
+        return .{};
+    }
+
+    fn deinit(_: *Self) void {}
+    fn addConflict(_: *Self, _: usize, _: usize) !void {}
+    inline fn acquire(_: *Self, _: usize, _: usize, _: usize) void {}
+    inline fn release(_: *Self, _: usize, _: usize, _: usize) void {}
+};
+
+const ConflictLock = if (bench_options.no_lock)
+    NoLock
+else if (bench_options.use_v2)
     semantic_lock.ConflictGraphLockV2
 else
     semantic_lock.ConflictGraphLockV1;
 
 const parts_count = 4;
-const max_query_len = bench_options.max_query_len;
-const array_len = 1 << 12;
+const max_query_len = 10_000;
+const array_len = 1 << 26;
 const part_len = array_len / parts_count;
-const work_count = 1 << 15;
+const work_count = (1 << 18);
 const thread_count = bench_options.thread_count;
+var shared_values: []AtomicInteger = &.{};
 
 comptime {
-    if (max_query_len == 0 or max_query_len > array_len) {
-        @compileError("bench-query-size must be in 1..array_len");
-    }
     if (thread_count == 0 or thread_count > 11) {
         @compileError("bench-threads must be in 1..11");
     }
@@ -45,17 +60,17 @@ const Operation = enum {
 const Request = union(Operation) {
     set_range: struct {
         query: Query,
-        value: usize,
+        value: i32,
     },
     add_range: struct {
         query: Query,
-        value: usize,
+        value: i32,
     },
     sum_range: Query,
     point_get: usize,
     point_set: struct {
         index: usize,
-        value: usize,
+        value: i32,
     },
 };
 
@@ -94,7 +109,7 @@ const Workload = struct {
     }
 
     pub fn run(self: *Workload, allocator: std.mem.Allocator) void {
-        runArrayBenchmark(allocator, self) catch |err| {
+        runArrayBenchmark(allocator, shared_values, self) catch |err| {
             std.debug.panic("benchmark failed: {s}", .{@errorName(err)});
         };
     }
@@ -147,7 +162,7 @@ fn randomQuery(random: std.Random, size: usize, max_length: usize) Query {
     std.debug.assert(max_length <= size);
 
     const length = random.intRangeAtMost(usize, 1, max_length);
-    const left = random.intRangeAtMost(usize, 0, size - length);
+    const left = random.uintLessThan(usize, size - length);
 
     return .{
         .left = left,
@@ -197,7 +212,7 @@ fn requestBounds(request: Request) PartBounds {
 
 fn executeRequest(
     graph: *ConflictLock,
-    values: []std.atomic.Value(usize),
+    values: []AtomicInteger,
     request: Request,
 ) void {
     const operation = std.meta.activeTag(request);
@@ -221,9 +236,9 @@ fn executeRequest(
             }
         },
         .sum_range => |query| {
-            var sum: usize = 0;
+            var sum: i64 = 0;
             for (query.left..query.right_exclusive) |index| {
-                sum +%= values[index].load(.monotonic);
+                sum +%= @as(i64, values[index].load(.monotonic));
             }
             std.mem.doNotOptimizeAway(sum);
         },
@@ -232,12 +247,14 @@ fn executeRequest(
 
 fn runWorker(
     graph: *ConflictLock,
-    values: []std.atomic.Value(usize),
+    values: []AtomicInteger,
     workload: *const Workload,
     worker_index: usize,
 ) void {
     var prng = std.Random.DefaultPrng.init(@intCast(worker_index + 1));
     const random = prng.random();
+
+    semantic_lock.slot_id = worker_index;
 
     for (0..work_count) |_| {
         const operation = workload.chooseOperation(random);
@@ -258,12 +275,12 @@ fn addArrayConflicts(graph: *ConflictLock) !void {
     try graph.addConflict(@backingInt(Operation.sum_range), @backingInt(Operation.point_set));
 }
 
-fn runArrayBenchmark(allocator: std.mem.Allocator, workload: *const Workload) !void {
+fn runArrayBenchmark(
+    allocator: std.mem.Allocator,
+    values: []AtomicInteger,
+    workload: *const Workload,
+) !void {
     std.debug.assert(workload.total() == 100);
-
-    var values: std.ArrayList(std.atomic.Value(usize)) = .empty;
-    defer values.deinit(allocator);
-    try values.appendNTimes(allocator, .init(0), array_len);
 
     var graph = try ConflictLock.init(allocator, 5);
     defer graph.deinit();
@@ -279,15 +296,20 @@ fn runArrayBenchmark(allocator: std.mem.Allocator, workload: *const Workload) !v
         threads[spawned_count] = try std.Thread.spawn(
             .{},
             runWorker,
-            .{ &graph, values.items, workload, worker_index },
+            .{ &graph, values, workload, worker_index },
         );
         spawned_count += 1;
     }
 }
 
 pub fn main(init: std.process.Init) !void {
+    var values: std.ArrayList(AtomicInteger) = .empty;
+    defer values.deinit(init.gpa);
+    try values.appendNTimes(init.gpa, .init(0), array_len);
+    shared_values = values.items;
+
     var benchmark = zbench.Benchmark.init(init.gpa, .{
-        .iterations = 50,
+        .iterations = 10,
         .items_per_run = thread_count * work_count,
     });
     defer benchmark.deinit();

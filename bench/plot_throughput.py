@@ -18,17 +18,16 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
-from matplotlib.lines import Line2D
-from matplotlib.ticker import MaxNLocator
+from matplotlib.ticker import LogFormatterMathtext, LogLocator, NullFormatter
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CSV_PATH = ROOT / "bench" / "results" / "sweep.csv"
-QUERY_SIZES = (1 << 9, 1 << 10, 1 << 11, 1 << 12)
-THREAD_COUNTS = range(1, 12)
-VERSIONS = ("v1", "v2")
-COLORS = {"v1": "#4C78A8", "v2": "#F58518"}
-MARKERS = {"v1": "o", "v2": "s"}
+DEFAULT_CSV = ROOT / "bench" / "results" / "sweep.csv"
+VERSIONS = (
+    ("v1", "V1", "#4C78A8", "o"),
+    ("v2", "V2", "#F58518", "s"),
+    ("no-lock", "No lock", "#54A24B", "^"),
+)
 
 
 def percentile(values: list[float], fraction: float) -> float:
@@ -42,186 +41,119 @@ def percentile(values: list[float], fraction: float) -> float:
     return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
 
 
-def load_rows(csv_path: Path) -> tuple[list[dict], int]:
-    rows: list[dict] = []
-    skipped = 0
-
-    with csv_path.open(newline="", encoding="utf-8") as csv_file:
+def load_rows(path: Path) -> list[dict]:
+    rows = []
+    with path.open(newline="", encoding="utf-8") as csv_file:
         for raw in csv.DictReader(csv_file):
             try:
-                version = raw["version"].strip().lower()
-                timings = [int(value) for value in json.loads(raw["timings_ns"])]
                 items_per_run = int(raw["items_per_run"])
-                if version not in VERSIONS or not timings or any(value <= 0 for value in timings):
-                    raise ValueError
-
+                timings = [int(value) for value in json.loads(raw["timings_ns"])]
                 sample_throughput = [
                     items_per_run * 1_000_000_000.0 / timing for timing in timings
                 ]
                 rows.append(
                     {
-                        "version": version,
-                        "max_query_len": int(raw["max_query_len"]),
+                        "version": raw["version"],
                         "threads": int(raw["threads"]),
                         "workload": raw["workload"],
-                        "throughput": float(raw["items_per_second"]),
+                        "throughput": percentile(sample_throughput, 0.50),
                         "q25": percentile(sample_throughput, 0.25),
                         "q75": percentile(sample_throughput, 0.75),
                     }
                 )
             except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-                skipped += 1
-
-    return rows, skipped
-
-
-def configure_style() -> None:
-    plt.rcParams.update(
-        {
-            "font.size": 10,
-            "axes.titleweight": "bold",
-            "axes.spines.top": False,
-            "axes.spines.right": False,
-            "axes.grid": True,
-            "grid.alpha": 0.35,
-            "grid.linestyle": "--",
-            "figure.facecolor": "#FAFAFA",
-            "axes.facecolor": "#FFFFFF",
-            "savefig.facecolor": "#FAFAFA",
-        }
-    )
-
-
-def query_label(max_query_len: int) -> str:
-    power = int(math.log2(max_query_len))
-    return f"Queries up to $2^{{{power}}}$"
-
-
-def query_power_label(max_query_len: int) -> str:
-    power = int(math.log2(max_query_len))
-    return f"$2^{{{power}}}$"
+                continue
+    return rows
 
 
 def workload_code(workload: str) -> str:
-    match = re.match(r"\(([a-zA-Z0-9]+)\)", workload)
+    match = re.match(r"\(([a-zA-Z])\)", workload)
     return match.group(1).lower() if match else "workload"
 
 
 def workload_title(workload: str) -> str:
-    match = re.match(r"\(([a-zA-Z0-9]+)\)\s*(.*)", workload)
+    match = re.match(r"\(([a-zA-Z])\)\s*(.*)", workload)
     if not match:
         return workload
     return f"Workload {match.group(1).upper()}: {match.group(2)}"
 
 
-def save_figure(figure: plt.Figure, output_base: Path) -> None:
-    output_base.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(output_base.with_suffix(".png"), dpi=180, bbox_inches="tight")
-    figure.savefig(output_base.with_suffix(".svg"), bbox_inches="tight")
-
-
 def plot_workload(rows: list[dict], workload: str, output_dir: Path) -> None:
-    figure, axes = plt.subplots(2, 2, figsize=(13.5, 8.5), sharex=True)
+    figure, axis = plt.subplots(figsize=(9.5, 5.8))
+    minimum = math.inf
 
-    for axis, max_query_len in zip(axes.flat, QUERY_SIZES):
-        has_data = False
-        for version in VERSIONS:
-            points = sorted(
-                (
-                    row
-                    for row in rows
-                    if row["workload"] == workload
-                    and row["max_query_len"] == max_query_len
-                    and row["version"] == version
-                ),
-                key=lambda row: row["threads"],
-            )
-            if not points:
-                continue
-
-            has_data = True
-            threads = [row["threads"] for row in points]
-            throughput = [row["throughput"] / 1_000_000.0 for row in points]
-            q25 = [row["q25"] / 1_000_000.0 for row in points]
-            q75 = [row["q75"] / 1_000_000.0 for row in points]
-
-            axis.plot(
-                threads,
-                throughput,
-                color=COLORS[version],
-                marker=MARKERS[version],
-                linewidth=2.2,
-                markersize=5.5,
-                label=version.upper(),
-            )
-            axis.fill_between(threads, q25, q75, color=COLORS[version], alpha=0.14)
-
-        axis.set_title(query_label(max_query_len))
-        axis.set_xlim(0.7, 11.3)
-        axis.set_xticks(list(THREAD_COUNTS))
-        axis.yaxis.set_major_locator(MaxNLocator(nbins=6))
-        axis.set_xlabel("Threads")
-        axis.set_ylabel(r"Throughput ($\times 10^6$ requests/s)")
-        if not has_data:
-            axis.text(
-                0.5,
-                0.5,
-                "Waiting for data",
-                transform=axis.transAxes,
-                ha="center",
-                va="center",
-                color="#777777",
-            )
-
-    legend = [
-        Line2D(
-            [0],
-            [0],
-            color=COLORS[version],
-            marker=MARKERS[version],
-            linewidth=2.2,
-            label=version.upper(),
+    for version, label, color, marker in VERSIONS:
+        points = sorted(
+            (
+                row
+                for row in rows
+                if row["workload"] == workload and row["version"] == version
+            ),
+            key=lambda row: row["threads"],
         )
-        for version in VERSIONS
-    ]
-    figure.suptitle(
-        f"{workload_title(workload)}\nArray size: $2^{{12}}$",
-        fontsize=14,
-        fontweight="bold",
-        y=0.995,
-    )
-    figure.legend(handles=legend, loc="upper center", ncol=2, bbox_to_anchor=(0.5, 0.925))
-    figure.text(
-        0.5,
-        0.01,
-        "Shaded area: 25th–75th percentile across benchmark runs",
-        ha="center",
-        color="#666666",
-        fontsize=9,
-    )
-    figure.tight_layout(rect=(0, 0.035, 1, 0.89))
+        if not points:
+            continue
+        minimum = min(minimum, *(point["q25"] for point in points))
+        axis.plot(
+            [point["threads"] for point in points],
+            [point["throughput"] for point in points],
+            label=label,
+            color=color,
+            marker=marker,
+            linewidth=2.2,
+            markersize=6,
+        )
+        axis.fill_between(
+            [point["threads"] for point in points],
+            [point["q25"] for point in points],
+            [point["q75"] for point in points],
+            color=color,
+            alpha=0.14,
+        )
 
-    save_figure(figure, output_dir / f"throughput_{workload_code(workload)}")
+    axis.set_title(f"{workload_title(workload)}\n$N = 2^{{26}}$, ranges up to $10^4$")
+    axis.set_xlabel("Threads")
+    axis.set_ylabel("Throughput, ops/sec, log-based")
+    axis.set_yscale("log")
+    axis.yaxis.set_major_locator(LogLocator(base=10, subs=(1.0,)))
+    axis.yaxis.set_major_formatter(LogFormatterMathtext(base=10, labelOnlyBase=True))
+    axis.yaxis.set_minor_locator(LogLocator(base=10, subs=range(2, 10)))
+    axis.yaxis.set_minor_formatter(NullFormatter())
+    axis.set_ylim(bottom=10 ** math.floor(math.log10(minimum)))
+    axis.set_xticks(range(1, 12))
+    axis.grid(True, which="both", linestyle="--", alpha=0.35)
+    axis.spines[["top", "right"]].set_visible(False)
+    axis.legend()
+    figure.tight_layout()
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    name = f"throughput_{workload_code(workload)}"
+    figure.savefig(output_dir / f"{name}.png", dpi=180, bbox_inches="tight")
     plt.close(figure)
 
 
 def main() -> int:
-    csv_path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_CSV_PATH
+    csv_path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_CSV
+    selected_workload = sys.argv[2].lower() if len(sys.argv) > 2 else None
     if not csv_path.is_file():
         print(f"CSV not found: {csv_path}", file=sys.stderr)
         return 1
 
-    rows, _ = load_rows(csv_path)
+    rows = load_rows(csv_path)
     if not rows:
-        print(f"No complete benchmark rows in {csv_path}", file=sys.stderr)
+        print(f"No benchmark rows in {csv_path}", file=sys.stderr)
         return 1
 
-    configure_style()
     output_dir = csv_path.parent / "plots"
-    workloads = sorted({row["workload"] for row in rows})
-    for workload in workloads:
+    plotted = 0
+    for workload in dict.fromkeys(row["workload"] for row in rows):
+        if selected_workload and workload_code(workload) != selected_workload:
+            continue
         plot_workload(rows, workload, output_dir)
-
+        plotted += 1
+    if plotted == 0:
+        print(f"Workload not found: {selected_workload}", file=sys.stderr)
+        return 1
     return 0
 
 

@@ -76,7 +76,6 @@ pub const ConflictGraphLock = struct {
         acquire_loop: while (true) {
             var precheck_passed = true;
             for (self.adjacency.items[vertex_id].items) |neighbor_id| {
-                // TODO: std.mem.find
                 for (left..(right + 1)) |idx| {
                     if (self.vertex_states.items[neighbor_id].active_count[idx].value.load(.monotonic) != 0) {
                         precheck_passed = false;

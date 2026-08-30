@@ -2,8 +2,4 @@
 zig-out/
 .vscode/
 .DS_Store
-__pycache__/
-bench/results/*
-!bench/results/plots/
-bench/results/plots/*
-!bench/results/plots/*.png
+bench/results/

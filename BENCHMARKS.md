@@ -23,7 +23,3 @@
 ## Workload F: 90% addRange, 5% setRange/sumRange
 
 ![Workload F throughput](bench/results/plots/throughput_f.png)
-
-## V2 / V1 Throughput
-
-![V2 to V1 throughput ratio](bench/results/plots/v2_speedup_overview.png)
