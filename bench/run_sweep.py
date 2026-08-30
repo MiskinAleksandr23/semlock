@@ -14,14 +14,16 @@ LOG_PATH = RESULTS_DIR / "sweep.log"
 
 ARRAY_LEN = 1 << 26
 MAX_QUERY_LEN = 10_000
-WORK_COUNT = (1 << 15) * 10
+WORK_COUNT = 1 << 18
 ITERATIONS = 10
 THREAD_COUNTS = range(1, 12)
 VERSIONS = (
     ("v1", ("-Dbench-v2=false",)),
+    ("v1-long-adder", ("-Dbench-long-adder=true",)),
     ("v2", ("-Dbench-v2=true",)),
     ("no-lock", ("-Dbench-no-lock=true",)),
 )
+VERSION_BY_NAME = dict(VERSIONS)
 
 CSV_FIELDS = (
     "version",
@@ -46,19 +48,43 @@ CSV_FIELDS = (
 
 
 def main() -> int:
+    if len(sys.argv) > 2 or (len(sys.argv) == 2 and sys.argv[1] not in VERSION_BY_NAME):
+        choices = ", ".join(VERSION_BY_NAME)
+        print(f"Usage: {Path(sys.argv[0]).name} [{choices}]", file=sys.stderr)
+        return 2
+
+    selected_version = sys.argv[1] if len(sys.argv) == 2 else None
+    selected_versions = (
+        ((selected_version, VERSION_BY_NAME[selected_version]),)
+        if selected_version
+        else VERSIONS
+    )
+
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    total = len(THREAD_COUNTS) * len(VERSIONS)
+    preserved_rows = []
+    if selected_version and CSV_PATH.is_file():
+        with CSV_PATH.open(newline="", encoding="utf-8") as existing_file:
+            for row in csv.DictReader(existing_file):
+                if row.get("version") == selected_version:
+                    continue
+                row["work_count"] = str(WORK_COUNT)
+                row["items_per_run"] = str(int(row["threads"]) * WORK_COUNT)
+                preserved_rows.append(row)
+
+    total = len(THREAD_COUNTS) * len(selected_versions)
     completed = 0
 
+    log_mode = "a" if selected_version else "w"
     with CSV_PATH.open("w", newline="", encoding="utf-8") as csv_file, LOG_PATH.open(
-        "w", encoding="utf-8"
+        log_mode, encoding="utf-8"
     ) as log_file:
         writer = csv.DictWriter(csv_file, fieldnames=CSV_FIELDS)
         writer.writeheader()
+        writer.writerows(preserved_rows)
         csv_file.flush()
 
         for threads in THREAD_COUNTS:
-            for version, version_args in VERSIONS:
+            for version, version_args in selected_versions:
                 completed += 1
                 label = f"[{completed}/{total}] {version}, threads={threads}"
                 print(label, flush=True)

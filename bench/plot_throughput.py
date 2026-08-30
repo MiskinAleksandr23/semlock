@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CSV = ROOT / "bench" / "results" / "sweep.csv"
 VERSIONS = (
     ("v1", "V1", "#4C78A8", "o"),
+    ("v1-long-adder", "V1 + LongAdder", "#B279A2", "D"),
     ("v2", "V2", "#F58518", "s"),
     ("no-lock", "No lock", "#54A24B", "^"),
 )

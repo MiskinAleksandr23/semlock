@@ -30,6 +30,8 @@ const NoLock = struct {
 
 const ConflictLock = if (bench_options.no_lock)
     NoLock
+else if (bench_options.long_adder)
+    semantic_lock.ConflictGraphLockV1LongAdder
 else if (bench_options.use_v2)
     semantic_lock.ConflictGraphLockV2
 else
@@ -253,8 +255,6 @@ fn runWorker(
 ) void {
     var prng = std.Random.DefaultPrng.init(@intCast(worker_index + 1));
     const random = prng.random();
-
-    semantic_lock.slot_id = worker_index;
 
     for (0..work_count) |_| {
         const operation = workload.chooseOperation(random);

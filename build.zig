@@ -9,6 +9,7 @@ pub fn build(b: *std.Build) void {
         "Optimization mode for benchmarks",
     ) orelse .fast;
     const bench_use_v2 = b.option(bool, "bench-v2", "Use ConflictGraphLockV2") orelse true;
+    const bench_long_adder = b.option(bool, "bench-long-adder", "Use V1 with striped counters") orelse false;
     const bench_no_lock = b.option(bool, "bench-no-lock", "Disable conflict locking") orelse false;
     const bench_threads = b.option(usize, "bench-threads", "Number of benchmark worker threads") orelse 11;
     const bench_json = b.option(bool, "bench-json", "Write benchmark results as JSON") orelse false;
@@ -70,10 +71,14 @@ pub fn build(b: *std.Build) void {
     });
     const benchmark_options = b.addOptions();
     benchmark_options.addOption(bool, "use_v2", bench_use_v2);
+    benchmark_options.addOption(bool, "long_adder", bench_long_adder);
     benchmark_options.addOption(bool, "no_lock", bench_no_lock);
     benchmark_options.addOption(usize, "thread_count", bench_threads);
     benchmark_options.addOption(bool, "json", bench_json);
     benchmark.root_module.addOptions("bench_options", benchmark_options);
+
+    const compile_benchmark_step = b.step("bench-compile", "Compile benchmarks without running them");
+    compile_benchmark_step.dependOn(&benchmark.step);
 
     const run_benchmark = b.addRunArtifact(benchmark);
 
