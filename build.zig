@@ -8,6 +8,10 @@ pub fn build(b: *std.Build) void {
         "bench-optimize",
         "Optimization mode for benchmarks",
     ) orelse .fast;
+    const bench_use_v2 = b.option(bool, "bench-v2", "Use ConflictGraphLockV2") orelse true;
+    const bench_query_size = b.option(usize, "bench-query-size", "Maximum range query length") orelse 1 << 11;
+    const bench_threads = b.option(usize, "bench-threads", "Number of benchmark worker threads") orelse 11;
+    const bench_json = b.option(bool, "bench-json", "Write benchmark results as JSON") orelse false;
     const test_filter = b.option([]const u8, "test-filter", "Run only tests matching this name");
 
     const semantic_lock_module = b.addModule("semantic_lock", .{
@@ -64,6 +68,13 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    const benchmark_options = b.addOptions();
+    benchmark_options.addOption(bool, "use_v2", bench_use_v2);
+    benchmark_options.addOption(usize, "max_query_len", bench_query_size);
+    benchmark_options.addOption(usize, "thread_count", bench_threads);
+    benchmark_options.addOption(bool, "json", bench_json);
+    benchmark.root_module.addOptions("bench_options", benchmark_options);
+
     const run_benchmark = b.addRunArtifact(benchmark);
 
     const benchmark_step = b.step("bench", "Run benchmarks (fast by default)");

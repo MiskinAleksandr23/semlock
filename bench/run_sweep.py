@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+
+import csv
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+RESULTS_DIR = ROOT / "bench" / "results"
+CSV_PATH = RESULTS_DIR / "sweep.csv"
+LOG_PATH = RESULTS_DIR / "sweep.log"
+
+ARRAY_LEN = 1 << 12
+WORK_COUNT = 1 << 15
+ITERATIONS = 50
+QUERY_SIZES = (1 << 9, 1 << 10, 1 << 11, 1 << 12)
+THREAD_COUNTS = range(1, 12)
+VERSIONS = (("v1", False), ("v2", True))
+
+CSV_FIELDS = (
+    "version",
+    "array_len",
+    "max_query_len",
+    "threads",
+    "work_count",
+    "iterations",
+    "items_per_run",
+    "workload",
+    "total_ns",
+    "mean_ns",
+    "stddev_ns",
+    "min_ns",
+    "max_ns",
+    "p75_ns",
+    "p99_ns",
+    "p995_ns",
+    "items_per_second",
+    "timings_ns",
+)
+
+
+def main() -> int:
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    total_configs = len(QUERY_SIZES) * len(THREAD_COUNTS) * len(VERSIONS)
+    completed = 0
+
+    with CSV_PATH.open("w", newline="", encoding="utf-8") as csv_file, LOG_PATH.open(
+        "w", encoding="utf-8"
+    ) as log_file:
+        writer = csv.DictWriter(csv_file, fieldnames=CSV_FIELDS)
+        writer.writeheader()
+        csv_file.flush()
+
+        for max_query_len in QUERY_SIZES:
+            for threads in THREAD_COUNTS:
+                for version, use_v2 in VERSIONS:
+                    completed += 1
+                    label = (
+                        f"[{completed}/{total_configs}] {version}, "
+                        f"max_query_len={max_query_len}, threads={threads}"
+                    )
+                    print(label, flush=True)
+
+                    command = [
+                        "zig",
+                        "build",
+                        "bench",
+                        "--summary",
+                        "none",
+                        f"-Dbench-v2={'true' if use_v2 else 'false'}",
+                        f"-Dbench-query-size={max_query_len}",
+                        f"-Dbench-threads={threads}",
+                        "-Dbench-json=true",
+                    ]
+                    log_file.write(f"{label}\n$ {' '.join(command)}\n")
+                    log_file.flush()
+
+                    process = subprocess.run(
+                        command,
+                        cwd=ROOT,
+                        text=True,
+                        capture_output=True,
+                    )
+                    if process.stderr:
+                        log_file.write(process.stderr)
+                    if process.returncode != 0:
+                        log_file.write(process.stdout)
+                        log_file.flush()
+                        print(f"Ошибка; подробности в {LOG_PATH}", file=sys.stderr)
+                        return process.returncode
+
+                    try:
+                        results = json.loads(process.stdout)
+                    except json.JSONDecodeError:
+                        log_file.write(process.stdout)
+                        log_file.flush()
+                        print(f"Некорректный JSON; подробности в {LOG_PATH}", file=sys.stderr)
+                        return 1
+
+                    for result in results:
+                        statistics = result["timing_statistics"]
+                        percentiles = statistics["percentiles"]
+                        writer.writerow(
+                            {
+                                "version": version,
+                                "array_len": ARRAY_LEN,
+                                "max_query_len": max_query_len,
+                                "threads": threads,
+                                "work_count": WORK_COUNT,
+                                "iterations": ITERATIONS,
+                                "items_per_run": threads * WORK_COUNT,
+                                "workload": result["name"],
+                                "total_ns": statistics["total"],
+                                "mean_ns": statistics["mean"],
+                                "stddev_ns": statistics["stddev"],
+                                "min_ns": statistics["min"],
+                                "max_ns": statistics["max"],
+                                "p75_ns": percentiles["p75"],
+                                "p99_ns": percentiles["p99"],
+                                "p995_ns": percentiles["p995"],
+                                "items_per_second": result["throughput"]["items_per_second"],
+                                "timings_ns": json.dumps(result["timings"], separators=(",", ":")),
+                            }
+                        )
+
+                    csv_file.flush()
+                    log_file.flush()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,6 +1,7 @@
 const std = @import("std");
 const zbench = @import("zbench");
 const semantic_lock = @import("semantic_lock");
+const bench_options = @import("bench_options");
 
 const Query = struct {
     left: usize,
@@ -12,14 +13,26 @@ const PartBounds = struct {
     right: usize,
 };
 
-const ConflictLock = semantic_lock.ConflictGraphLockV2;
+const ConflictLock = if (bench_options.use_v2)
+    semantic_lock.ConflictGraphLockV2
+else
+    semantic_lock.ConflictGraphLockV1;
 
 const parts_count = 4;
-const max_query_len = 1 << 11;
+const max_query_len = bench_options.max_query_len;
 const array_len = 1 << 12;
 const part_len = array_len / parts_count;
 const work_count = 1 << 15;
-const thread_count = 6;
+const thread_count = bench_options.thread_count;
+
+comptime {
+    if (max_query_len == 0 or max_query_len > array_len) {
+        @compileError("bench-query-size must be in 1..array_len");
+    }
+    if (thread_count == 0 or thread_count > 11) {
+        @compileError("bench-threads must be in 1..11");
+    }
+}
 
 const Operation = enum {
     set_range,
@@ -274,7 +287,7 @@ fn runArrayBenchmark(allocator: std.mem.Allocator, workload: *const Workload) !v
 
 pub fn main(init: std.process.Init) !void {
     var benchmark = zbench.Benchmark.init(init.gpa, .{
-        .iterations = 100,
+        .iterations = 50,
         .items_per_run = thread_count * work_count,
     });
     defer benchmark.deinit();
@@ -284,5 +297,25 @@ pub fn main(init: std.process.Init) !void {
     }
 
     const stdout: std.Io.File = .stdout();
-    try benchmark.run(init.io, stdout);
+    if (!bench_options.json) {
+        try benchmark.run(init.io, stdout);
+        return;
+    }
+
+    var file_writer = stdout.writerStreaming(init.io, &.{});
+    const writer: *std.Io.Writer = &file_writer.interface;
+
+    try writer.writeAll("[");
+    var iterator = try benchmark.iterator();
+    var result_index: usize = 0;
+    while (try iterator.next(init.io)) |step| switch (step) {
+        .progress => {},
+        .result => |result| {
+            defer result.deinit();
+            if (result_index != 0) try writer.writeAll(",");
+            try result.writeJSON(writer);
+            result_index += 1;
+        },
+    };
+    try writer.writeAll("]\n");
 }

@@ -9,12 +9,14 @@ const VertexState = struct {
     active_count: [kPartsCount]Counter,
 
     fn init() VertexState {
-        return .{ .active_count = .{
-            .{ .value = .init(0) },
-            .{ .value = .init(0) },
-            .{ .value = .init(0) },
-            .{ .value = .init(0) },
-        } };
+        return .{
+            .active_count = .{
+                .{ .value = .init(0) },
+                .{ .value = .init(0) },
+                .{ .value = .init(0) },
+                .{ .value = .init(0) },
+            },
+        };
     }
 };
 
