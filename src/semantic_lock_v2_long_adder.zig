@@ -1,7 +1,12 @@
 const std = @import("std");
+const bench_options = @import("bench_options");
 
 const StripedCounter = struct {
-    const stripe_count = 4;
+    const stripe_count = bench_options.stripe_count;
+
+    comptime {
+        if (stripe_count == 0) @compileError("bench-stripe-count must be positive");
+    }
 
     const Cell = struct {
         value: std.atomic.Value(usize) align(std.atomic.cache_line),
@@ -49,7 +54,11 @@ const StripedCounter = struct {
 };
 
 const VertexState = struct {
-    const kPartsCount = 4;
+    const kPartsCount = bench_options.parts_count;
+
+    comptime {
+        if (kPartsCount == 0) @compileError("bench-parts-count must be positive");
+    }
 
     const Counter = struct {
         value: std.atomic.Value(usize) align(std.atomic.cache_line),
@@ -265,17 +274,24 @@ test "long-adder lock handles shared and self-conflicting vertices V2" {
     try graph.addConflict(0, 1);
     try graph.addConflict(1, 1);
 
-    graph.acquire(0, 1, 2);
-    try std.testing.expect(!graph.vertex_states.items[0].active_count[0].isActive(.monotonic));
-    try std.testing.expect(graph.vertex_states.items[0].active_count[1].isActive(.monotonic));
-    try std.testing.expect(graph.vertex_states.items[0].active_count[2].isActive(.monotonic));
-    try std.testing.expect(!graph.vertex_states.items[0].active_count[3].isActive(.monotonic));
-    graph.release(0, 1, 2);
+    const left = if (VertexState.kPartsCount > 2) 1 else 0;
+    const right = @min(VertexState.kPartsCount - 1, 2);
 
-    graph.acquire(1, 0, 1);
-    try std.testing.expectEqual(1, graph.vertex_states.items[1].exclusive_count[0].value.load(.monotonic));
-    try std.testing.expectEqual(1, graph.vertex_states.items[1].exclusive_count[1].value.load(.monotonic));
-    try std.testing.expectEqual(0, graph.vertex_states.items[1].exclusive_count[2].value.load(.monotonic));
-    try std.testing.expectEqual(0, graph.vertex_states.items[1].exclusive_count[3].value.load(.monotonic));
-    graph.release(1, 0, 1);
+    graph.acquire(0, left, right);
+    for (0..VertexState.kPartsCount) |idx| {
+        try std.testing.expectEqual(
+            idx >= left and idx <= right,
+            graph.vertex_states.items[0].active_count[idx].isActive(.monotonic),
+        );
+    }
+    graph.release(0, left, right);
+
+    graph.acquire(1, left, right);
+    for (0..VertexState.kPartsCount) |idx| {
+        try std.testing.expectEqual(
+            @as(usize, if (idx >= left and idx <= right) 1 else 0),
+            graph.vertex_states.items[1].exclusive_count[idx].value.load(.monotonic),
+        );
+    }
+    graph.release(1, left, right);
 }

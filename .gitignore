@@ -3,3 +3,4 @@ zig-out/
 .vscode/
 .DS_Store
 bench/results/
+/benchmark_runs/

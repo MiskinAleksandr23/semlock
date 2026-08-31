@@ -1,7 +1,12 @@
 const std = @import("std");
+const bench_options = @import("bench_options");
 
 const StripedCounter = struct {
-    const stripe_count = 16;
+    const stripe_count = bench_options.stripe_count;
+
+    comptime {
+        if (stripe_count == 0) @compileError("bench-stripe-count must be positive");
+    }
 
     const Cell = struct {
         value: std.atomic.Value(usize) align(std.atomic.cache_line),
@@ -49,7 +54,6 @@ const StripedCounter = struct {
 };
 
 const VertexState = struct {
-    // Self-conflicting operations still need one CAS-able counter.
     exclusive_count: std.atomic.Value(usize) align(std.atomic.cache_line),
     active_count: StripedCounter,
 

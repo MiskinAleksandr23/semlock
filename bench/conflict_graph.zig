@@ -39,17 +39,35 @@ else if (bench_options.use_v2)
 else
     semantic_lock.ConflictGraphLockV1;
 
-const parts_count = 4;
-const max_query_len = 10_000;
-const array_len = 1 << 26;
+const parts_count = bench_options.parts_count;
+const max_query_len = bench_options.max_query_len;
+const array_len = bench_options.array_len;
 const part_len = array_len / parts_count;
-const work_count = (1 << 18);
+const work_count = bench_options.work_count;
 const thread_count = bench_options.thread_count;
 var shared_values: []AtomicInteger = &.{};
 
 comptime {
     if (thread_count == 0 or thread_count > 11) {
         @compileError("bench-threads must be in 1..11");
+    }
+    if (parts_count == 0) {
+        @compileError("bench-parts-count must be positive");
+    }
+    if (bench_options.stripe_count == 0) {
+        @compileError("bench-stripe-count must be positive");
+    }
+    if (array_len == 0 or array_len % parts_count != 0) {
+        @compileError("bench-array-len must be positive and divisible by bench-parts-count");
+    }
+    if (max_query_len == 0 or max_query_len >= array_len) {
+        @compileError("bench-max-query-len must be in 1..bench-array-len-1");
+    }
+    if (work_count == 0) {
+        @compileError("bench-work-count must be positive");
+    }
+    if (bench_options.iterations == 0) {
+        @compileError("bench-iterations must be positive");
     }
 }
 
@@ -311,7 +329,7 @@ pub fn main(init: std.process.Init) !void {
     shared_values = values.items;
 
     var benchmark = zbench.Benchmark.init(init.gpa, .{
-        .iterations = 20,
+        .iterations = bench_options.iterations,
         .items_per_run = thread_count * work_count,
     });
     defer benchmark.deinit();

@@ -6,6 +6,7 @@
 # ]
 # ///
 
+import argparse
 import csv
 import json
 import math
@@ -43,7 +44,7 @@ def percentile(values: list[float], fraction: float) -> float:
     return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
 
 
-def load_rows(path: Path) -> list[dict]:
+def load_rows(path: Path, statistic: str) -> list[dict]:
     rows = []
     with path.open(newline="", encoding="utf-8") as csv_file:
         for raw in csv.DictReader(csv_file):
@@ -53,17 +54,30 @@ def load_rows(path: Path) -> list[dict]:
                 sample_throughput = [
                     items_per_run * 1_000_000_000.0 / timing for timing in timings
                 ]
+                center = (
+                    sum(sample_throughput) / len(sample_throughput)
+                    if statistic == "mean"
+                    else percentile(sample_throughput, 0.50)
+                )
                 rows.append(
                     {
                         "version": raw["version"],
                         "threads": int(raw["threads"]),
                         "workload": raw["workload"],
-                        "throughput": percentile(sample_throughput, 0.50),
+                        "array_len": int(raw["array_len"]),
+                        "max_query_len": int(raw["max_query_len"]),
+                        "throughput": center,
                         "q25": percentile(sample_throughput, 0.25),
                         "q75": percentile(sample_throughput, 0.75),
                     }
                 )
-            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            except (
+                KeyError,
+                TypeError,
+                ValueError,
+                ZeroDivisionError,
+                json.JSONDecodeError,
+            ):
                 continue
     return rows
 
@@ -80,9 +94,24 @@ def workload_title(workload: str) -> str:
     return f"Workload {match.group(1).upper()}: {match.group(2)}"
 
 
+def number_label(value: int) -> str:
+    if value > 1 and value & (value - 1) == 0:
+        return f"$2^{{{value.bit_length() - 1}}}$"
+
+    power = 1
+    exponent = 0
+    while power < value:
+        power *= 10
+        exponent += 1
+    if value > 1 and power == value:
+        return f"$10^{{{exponent}}}$"
+    return f"{value:,}"
+
+
 def plot_workload(rows: list[dict], workload: str, output_dir: Path) -> None:
     figure, axis = plt.subplots(figsize=(9.5, 5.8))
     minimum = math.inf
+    metadata = next(row for row in rows if row["workload"] == workload)
 
     for version, label, color, marker in VERSIONS:
         points = sorted(
@@ -113,7 +142,11 @@ def plot_workload(rows: list[dict], workload: str, output_dir: Path) -> None:
             alpha=0.14,
         )
 
-    axis.set_title(f"{workload_title(workload)}\n$N = 2^{{26}}$, ranges up to $10^4$")
+    axis.set_title(
+        f"{workload_title(workload)}\n"
+        f"N = {number_label(metadata['array_len'])}, "
+        f"ranges up to {number_label(metadata['max_query_len'])}"
+    )
     axis.set_xlabel("Threads")
     axis.set_ylabel("Throughput, ops/sec, log-based")
     axis.set_yscale("log")
@@ -135,18 +168,25 @@ def plot_workload(rows: list[dict], workload: str, output_dir: Path) -> None:
 
 
 def main() -> int:
-    csv_path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_CSV
-    selected_workload = sys.argv[2].lower() if len(sys.argv) > 2 else None
+    parser = argparse.ArgumentParser()
+    parser.add_argument("csv_path", nargs="?", type=Path, default=DEFAULT_CSV)
+    parser.add_argument("workload", nargs="?")
+    parser.add_argument("--statistic", choices=("median", "mean"), default="median")
+    parser.add_argument("--output-dir", type=Path)
+    args = parser.parse_args()
+
+    csv_path = args.csv_path
+    selected_workload = args.workload.lower() if args.workload else None
     if not csv_path.is_file():
         print(f"CSV not found: {csv_path}", file=sys.stderr)
         return 1
 
-    rows = load_rows(csv_path)
+    rows = load_rows(csv_path, args.statistic)
     if not rows:
         print(f"No benchmark rows in {csv_path}", file=sys.stderr)
         return 1
 
-    output_dir = csv_path.parent / "plots"
+    output_dir = args.output_dir or csv_path.parent / "plots"
     plotted = 0
     for workload in dict.fromkeys(row["workload"] for row in rows):
         if selected_workload and workload_code(workload) != selected_workload:

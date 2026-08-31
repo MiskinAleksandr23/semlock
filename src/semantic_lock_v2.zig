@@ -1,7 +1,12 @@
 const std = @import("std");
+const bench_options = @import("bench_options");
 
 const VertexState = struct {
-    const kPartsCount = 4;
+    const kPartsCount = bench_options.parts_count;
+
+    comptime {
+        if (kPartsCount == 0) @compileError("bench-parts-count must be positive");
+    }
     const Counter = struct {
         value: std.atomic.Value(usize) align(std.atomic.cache_line),
     };
