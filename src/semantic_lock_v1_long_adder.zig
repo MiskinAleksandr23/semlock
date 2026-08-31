@@ -8,7 +8,6 @@ const StripedCounter = struct {
     };
 
     var next_stripe: std.atomic.Value(usize) = .init(0);
-    // acquire/release must run on the same OS thread.
     threadlocal var current_stripe: ?usize = null;
 
     cells: [stripe_count]Cell,
