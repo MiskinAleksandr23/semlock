@@ -30,6 +30,8 @@ const NoLock = struct {
 
 const ConflictLock = if (bench_options.no_lock)
     NoLock
+else if (bench_options.v2_long_adder)
+    semantic_lock.ConflictGraphLockV2LongAdder
 else if (bench_options.long_adder)
     semantic_lock.ConflictGraphLockV1LongAdder
 else if (bench_options.use_v2)
@@ -309,7 +311,7 @@ pub fn main(init: std.process.Init) !void {
     shared_values = values.items;
 
     var benchmark = zbench.Benchmark.init(init.gpa, .{
-        .iterations = 10,
+        .iterations = 20,
         .items_per_run = thread_count * work_count,
     });
     defer benchmark.deinit();

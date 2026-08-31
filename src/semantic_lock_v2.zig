@@ -6,17 +6,18 @@ const VertexState = struct {
         value: std.atomic.Value(usize) align(std.atomic.cache_line),
     };
 
-    active_count: [kPartsCount]Counter,
+    active_count: [kPartsCount]Counter = undefined,
 
     fn init() VertexState {
-        return .{
-            .active_count = .{
-                .{ .value = .init(0) },
-                .{ .value = .init(0) },
-                .{ .value = .init(0) },
-                .{ .value = .init(0) },
-            },
-        };
+        var result: VertexState = undefined;
+
+        inline for (0..kPartsCount) |index| {
+            result.active_count[index] = .{
+                .value = .init(0),
+            };
+        }
+
+        return result;
     }
 };
 
@@ -90,7 +91,10 @@ pub const ConflictGraphLock = struct {
             }
 
             if (self.has_self_loop.items[vertex_id]) {
-                var success_cas: [4]bool = .{ false, false, false, false };
+                var success_cas: [VertexState.kPartsCount]bool = undefined;
+                for (0..VertexState.kPartsCount) |idx| {
+                    success_cas[idx] = false;
+                }
                 var lock_self: bool = true;
                 for (left..(right + 1)) |idx| {
                     if (self.vertex_states.items[vertex_id].active_count[idx].value.cmpxchgWeak(

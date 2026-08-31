@@ -9,6 +9,7 @@ pub fn build(b: *std.Build) void {
         "Optimization mode for benchmarks",
     ) orelse .fast;
     const bench_use_v2 = b.option(bool, "bench-v2", "Use ConflictGraphLockV2") orelse true;
+    const bench_v2_long_adder = b.option(bool, "bench-v2-long-adder", "Use V2 with striped counters") orelse false;
     const bench_long_adder = b.option(bool, "bench-long-adder", "Use V1 with striped counters") orelse false;
     const bench_no_lock = b.option(bool, "bench-no-lock", "Disable conflict locking") orelse false;
     const bench_threads = b.option(usize, "bench-threads", "Number of benchmark worker threads") orelse 11;
@@ -71,6 +72,7 @@ pub fn build(b: *std.Build) void {
     });
     const benchmark_options = b.addOptions();
     benchmark_options.addOption(bool, "use_v2", bench_use_v2);
+    benchmark_options.addOption(bool, "v2_long_adder", bench_v2_long_adder);
     benchmark_options.addOption(bool, "long_adder", bench_long_adder);
     benchmark_options.addOption(bool, "no_lock", bench_no_lock);
     benchmark_options.addOption(usize, "thread_count", bench_threads);

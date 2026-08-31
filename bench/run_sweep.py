@@ -15,12 +15,13 @@ LOG_PATH = RESULTS_DIR / "sweep.log"
 ARRAY_LEN = 1 << 26
 MAX_QUERY_LEN = 10_000
 WORK_COUNT = 1 << 18
-ITERATIONS = 10
+ITERATIONS = 20
 THREAD_COUNTS = range(1, 12)
 VERSIONS = (
     ("v1", ("-Dbench-v2=false",)),
     ("v1-long-adder", ("-Dbench-long-adder=true",)),
     ("v2", ("-Dbench-v2=true",)),
+    ("v2-long-adder", ("-Dbench-v2-long-adder=true",)),
     ("no-lock", ("-Dbench-no-lock=true",)),
 )
 VERSION_BY_NAME = dict(VERSIONS)

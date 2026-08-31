@@ -27,6 +27,7 @@ VERSIONS = (
     ("v1", "V1", "#4C78A8", "o"),
     ("v1-long-adder", "V1 + LongAdder", "#B279A2", "D"),
     ("v2", "V2", "#F58518", "s"),
+    ("v2-long-adder", "V2 + LongAdder", "#E45756", "P"),
     ("no-lock", "No lock", "#54A24B", "^"),
 )
 
